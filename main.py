@@ -386,8 +386,8 @@ def _apply_styles():
 
         .st-key-sos_trigger button,
         .sos-main button[aria-label="SOS"] {
-            width: 228px !important;
-            height: 228px !important;
+            width: 300px !important;
+            height: 300px !important;
             border-radius: 50% !important;
             background: radial-gradient(circle at 30% 30%, #ff5a5a, #ef4444 62%, #b91c1c) !important;
             color: #ffffff !important;
