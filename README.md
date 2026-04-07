@@ -17,6 +17,7 @@ Production-ready Streamlit app for emergency alerts with secure authentication, 
 - 5-second false-alarm cancel window
 - Browser siren tone when SOS is armed
 - Logging to sos.log and delivery status reporting
+- **Live Tracking Dashboard**: Recipients receive tracking links in emails that show real-time emergency person location as they move (updates every 3 seconds)
 
 ## Project Structure
 

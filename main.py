@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 import re
 import time
+import html
 
 from auth import (
     clear_persistent_session,
@@ -14,6 +15,7 @@ from auth import (
     login_user,
     signup_user,
 )
+import db
 from db import execute, fetch_all, fetch_one, init_db
 from utils import (
     fetch_location,
@@ -1024,6 +1026,25 @@ def _send_sos(user, contacts, silent=False, message_override=None, force_live_lo
     alert_id = _create_alert_record(user, payload, custom_message, "queued", recipient_count)
     payload["alert_id"] = alert_id
 
+    # Create tracking session for live location sharing
+    try:
+        tracking_token = db.create_tracking_session(alert_id, user, payload)
+        payload["tracking_token"] = tracking_token
+        
+        # Build tracking URL based on environment
+        app_url = os.getenv("STREAMLIT_APP_URL", "").strip()
+        if not app_url:
+            # Fallback to localhost if not in environment
+            app_url = "http://localhost:8501"
+        
+        tracking_url = f"{app_url}?token={tracking_token}"
+        payload["tracking_url"] = tracking_url
+        logging.info("Created tracking session with token=%s for alert_id=%s", tracking_token, alert_id)
+    except Exception as e:
+        logging.warning("Failed to create tracking session: %s", str(e))
+        payload["tracking_token"] = None
+        payload["tracking_url"] = None
+
     st.session_state.pending_sos_future = None
     st.session_state.pending_call_future = None
     st.session_state.queued_channels = []
@@ -1052,6 +1073,18 @@ def _send_sos(user, contacts, silent=False, message_override=None, force_live_lo
             f"{delay_text}"
         )
         st.session_state.sos_notice_kind = "info"
+
+    return {
+        "alert_id": alert_id,
+        "tracking_token": payload.get("tracking_token"),
+        "location": {
+            "lat": payload.get("lat"),
+            "lon": payload.get("lon"),
+            "accuracy": payload.get("accuracy"),
+            "source": payload.get("source"),
+            "timestamp": payload.get("timestamp"),
+        },
+    }
 
 
 def _enable_mode_refresh(interval_seconds):
@@ -1091,13 +1124,32 @@ def _process_live_tracking(user, contacts):
         return
 
     if (now_ts - st.session_state.live_tracking_last_sent_at) >= 30:
-        _send_sos(
+        result = _send_sos(
             user,
             contacts,
             silent=True,
             message_override="Live tracking update: location heartbeat from safety app.",
             force_live_location=True,
         )
+        
+        # Update tracking session with fresh location
+        if result and isinstance(result, dict):
+            tracking_token = result.get("tracking_token")
+            location_payload = result.get("location")
+            if tracking_token and location_payload:
+                try:
+                    db.update_tracking_location(
+                        tracking_token,
+                        location_payload.get("lat"),
+                        location_payload.get("lon"),
+                        location_payload.get("accuracy"),
+                        location_payload.get("source"),
+                        location_payload.get("timestamp")
+                    )
+                    logging.info("Updated tracking session %s with fresh location", tracking_token)
+                except Exception as e:
+                    logging.warning("Failed to update tracking location: %s", str(e))
+        
         st.session_state.live_tracking_last_sent_at = now_ts
 
 
@@ -1416,6 +1468,99 @@ def _settings_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _tracking_page(token):
+    """Public page for viewing live emergency location tracking."""
+    st.set_page_config(page_title="Live Emergency Tracking", page_icon="📍", layout="centered")
+    
+    try:
+        session = db.get_tracking_session(token)
+        if not session:
+            st.error("❌ Tracking session not found or has expired.")
+            return
+        
+        # Extract session data based on database structure
+        if isinstance(session, (list, tuple)):
+            # SQL query result
+            (session_id, alert_id, tracking_token, lat, lon, accuracy, source, username, phone, msg, last_updated, created_at) = session[:12]
+        else:
+            # Dictionary result
+            lat = session.get("latitude")
+            lon = session.get("longitude")
+            username = session.get("username")
+            phone = session.get("phone")
+            msg = session.get("custom_message")
+            accuracy = session.get("accuracy")
+            source = session.get("source")
+            last_updated = session.get("last_updated")
+        
+        st.markdown("---")
+        st.title("🚨 Emergency Location Tracking")
+        
+        # Display person info
+        st.markdown(f"""
+        <div style='background:#fee2e2;border-left:4px solid #dc2626;padding:12px;border-radius:4px;margin:16px 0;'>
+            <b>Emergency Alert Active</b><br/>
+            Person in Emergency: <b>{html.escape(str(username or 'Unknown'))}</b><br/>
+            Contact: <b>{html.escape(str(phone or 'N/A'))}</b>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Display location map
+        if lat is not None and lon is not None:
+            st.markdown("### 📍 Current Location")
+            
+            # Create map using folium
+            import folium
+            from streamlit_folium import st_folium
+            
+            center = [lat, lon]
+            m = folium.Map(location=center, zoom_start=15, tiles="OpenStreetMap")
+            
+            folium.Marker(
+                location=center,
+                popup=f"{username or 'Emergency'}<br>Phone: {phone or 'N/A'}",
+                icon=folium.Icon(color="red", icon="exclamation"),
+            ).add_to(m)
+            
+            st_folium(m, width=700, height=500)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("📍 Latitude", f"{lat:.6f}")
+            with col2:
+                st.metric("📍 Longitude", f"{lon:.6f}")
+            
+            if accuracy:
+                st.caption(f"Accuracy: ±{accuracy}m | Source: {source or 'unknown'}")
+            
+            if last_updated:
+                try:
+                    from datetime import datetime
+                    last_ts = datetime.fromisoformat(str(last_updated).replace('Z', '+00:00'))
+                    st.caption(f"Last updated: {last_ts.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                except Exception:
+                    st.caption(f"Last updated: {last_updated}")
+        else:
+            st.warning("⚠️ Location not yet available. Please wait for updates...")
+        
+        # Auto-refresh instruction
+        st.info("📱 This page auto-refreshes every 3 seconds. If the person in emergency moves, their location will update automatically.")
+        
+        # JavaScript for auto-refresh
+        js_code = """
+        <script>
+        setTimeout(() => {
+            location.reload();
+        }, 3000);
+        </script>
+        """
+        st.markdown(js_code, unsafe_allow_html=True)
+        
+    except Exception as e:
+        logging.error("Error loading tracking session: %s", str(e))
+        st.error(f"❌ Error: {str(e)}")
+
+
 # Section: Top navigation
 def _top_nav():
     st.markdown("<div class='top-nav-title'>Navigation</div>", unsafe_allow_html=True)
@@ -1441,6 +1586,14 @@ def run_app():
     load_dotenv(override=True)
     setup_logging()
     init_db()
+    
+    # Check if this is a tracking link
+    query_params = st.query_params
+    if query_params.get("token"):
+        tracking_token = query_params.get("token")
+        _tracking_page(tracking_token)
+        return
+    
     ensure_startup_user(
         email=os.getenv("DEFAULT_LOGIN_EMAIL", "keerthanaveldanda05@gmail.com"),
         password=os.getenv("DEFAULT_LOGIN_PASSWORD", "123456789"),

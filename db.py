@@ -113,6 +113,25 @@ def init_db():
                 )
                 """
             )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tracking_sessions (
+                    id BIGSERIAL PRIMARY KEY,
+                    alert_id BIGINT NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+                    tracking_token TEXT NOT NULL UNIQUE,
+                    latitude DOUBLE PRECISION NOT NULL,
+                    longitude DOUBLE PRECISION NOT NULL,
+                    accuracy DOUBLE PRECISION,
+                    source TEXT,
+                    username TEXT,
+                    phone TEXT,
+                    custom_message TEXT,
+                    last_updated TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
         else:
             cur.execute(
                 """
@@ -181,6 +200,26 @@ def init_db():
                 """
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tracking_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_id INTEGER NOT NULL,
+                    tracking_token TEXT NOT NULL UNIQUE,
+                    latitude REAL NOT NULL,
+                    longitude REAL NOT NULL,
+                    accuracy REAL,
+                    source TEXT,
+                    username TEXT,
+                    phone TEXT,
+                    custom_message TEXT,
+                    last_updated TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (alert_id) REFERENCES alerts (id) ON DELETE CASCADE
+                )
+                """
+            )
+
 
 def execute(query, params=()):
     """Execute a write query and return last row id."""
@@ -224,3 +263,50 @@ def fetch_all(query, params=()):
             return cur.fetchall()
         cur = conn.execute(normalized, params)
         return cur.fetchall()
+
+
+def create_tracking_session(alert_id, user, payload):
+    """Create a new tracking session and return the tracking token."""
+    import secrets
+    token = secrets.token_urlsafe(24)
+    execute(
+        """
+        INSERT INTO tracking_sessions
+        (alert_id, tracking_token, latitude, longitude, accuracy, source, username, phone, custom_message, last_updated, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            alert_id,
+            token,
+            payload.get("lat"),
+            payload.get("lon"),
+            payload.get("accuracy"),
+            payload.get("source"),
+            user.get("username"),
+            user.get("phone"),
+            payload.get("message"),
+            str(payload.get("timestamp")),
+            str(payload.get("timestamp")),
+        ),
+    )
+    return token
+
+
+def get_tracking_session(token):
+    """Fetch active tracking session by token."""
+    return fetch_one(
+        "SELECT * FROM tracking_sessions WHERE tracking_token = ?",
+        (token,),
+    )
+
+
+def update_tracking_location(token, lat, lon, accuracy, source, timestamp):
+    """Update live location in an active tracking session."""
+    execute(
+        """
+        UPDATE tracking_sessions
+        SET latitude = ?, longitude = ?, accuracy = ?, source = ?, last_updated = ?
+        WHERE tracking_token = ?
+        """,
+        (lat, lon, accuracy, source, timestamp, token),
+    )

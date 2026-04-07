@@ -538,11 +538,16 @@ def _build_sos_message(user, location, recipient_email):
   default_message = os.getenv("SOS_DEFAULT_MESSAGE", DEFAULT_SOS_MESSAGE).strip() or DEFAULT_SOS_MESSAGE
   emergency_message = str(location.get("message") or default_message).strip()
   map_link = str(location.get("map_link", "")).strip()
+  tracking_url = str(location.get("tracking_url", "")).strip()
   timestamp = str(location.get("timestamp") or now_str())
   latitude = location.get("lat")
   longitude = location.get("lon")
   from_name = str(user.get("username", "OneTapSOS")).strip() or "OneTapSOS"
   reply_to = str(user.get("email", "")).strip() or smtp_user
+
+  tracking_section = ""
+  if tracking_url:
+    tracking_section = f"Live Tracking: {tracking_url}\n"
 
   plain_body = (
     "Emergency Alert from OneTapSOS\n\n"
@@ -550,10 +555,15 @@ def _build_sos_message(user, location, recipient_email):
     f"Phone: {sender_phone}\n"
     f"Emergency Message: {emergency_message}\n"
     f"Live Location: {map_link}\n"
+    f"{tracking_section}"
     f"Coordinates: {latitude}, {longitude}\n"
     f"Timestamp (UTC): {timestamp}\n"
     f"Recipient: {recipient_email}\n"
   )
+
+  tracking_row = ""
+  if tracking_url:
+    tracking_row = f"<tr><td style=\"padding:8px 0;color:#6b7280;\">Live Tracking</td><td style=\"padding:8px 0;\"><a href=\"{html.escape(tracking_url)}\" style=\"color:#dc2626;font-weight:700;text-decoration:none;\">View Live Map</a></td></tr>"
 
   html_body = f"""
   <html>
@@ -561,12 +571,13 @@ def _build_sos_message(user, location, recipient_email):
     <div style="max-width:640px;margin:0 auto;padding:24px;">
       <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(15,23,42,0.08);">
       <div style="font-size:18px;font-weight:700;color:#b91c1c;margin-bottom:8px;">Emergency SOS Alert</div>
-      <div style="font-size:14px;color:#374151;margin-bottom:20px;">An SOS trigger was activated in OneTapSOS.</div>
+      <div style="font-size:14px;color:#374151;margin-bottom:20px;">An SOS trigger was activated in OneTapSOS. The person in emergency may be moving - their location updates live.</div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111827;">
         <tr><td style="padding:8px 0;color:#6b7280;width:34%;">User</td><td style="padding:8px 0;font-weight:700;">{html.escape(sender_name)}</td></tr>
         <tr><td style="padding:8px 0;color:#6b7280;">Phone</td><td style="padding:8px 0;font-weight:700;">{html.escape(sender_phone)}</td></tr>
         <tr><td style="padding:8px 0;color:#6b7280;">Message</td><td style="padding:8px 0;font-weight:700;">{html.escape(emergency_message)}</td></tr>
         <tr><td style="padding:8px 0;color:#6b7280;">Location</td><td style="padding:8px 0;"><a href="{html.escape(map_link)}" style="color:#2563eb;font-weight:700;">Open live location</a></td></tr>
+        {tracking_row}
         <tr><td style="padding:8px 0;color:#6b7280;">Coordinates</td><td style="padding:8px 0;font-weight:700;">{html.escape(str(latitude))}, {html.escape(str(longitude))}</td></tr>
         <tr><td style="padding:8px 0;color:#6b7280;">Timestamp (UTC)</td><td style="padding:8px 0;font-weight:700;">{html.escape(timestamp)}</td></tr>
       </table>
