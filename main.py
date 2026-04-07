@@ -1470,8 +1470,7 @@ def _settings_page():
 
 def _tracking_page(token):
     """Public page for viewing live emergency location tracking."""
-    st.set_page_config(page_title="Live Emergency Tracking", page_icon="📍", layout="centered")
-    
+
     try:
         session = db.get_tracking_session(token)
         if not session:
@@ -1581,11 +1580,23 @@ def _top_nav():
 
 
 # Section: Main app entry
-def run_app():
-    st.set_page_config(page_title="OneTapSOS", page_icon="🚨", layout="centered")
+@st.cache_resource
+def _bootstrap_app():
+    """Run one-time startup work for the app process."""
     load_dotenv(override=True)
     setup_logging()
     init_db()
+    ensure_startup_user(
+        email=os.getenv("DEFAULT_LOGIN_EMAIL", "keerthanaveldanda05@gmail.com"),
+        password=os.getenv("DEFAULT_LOGIN_PASSWORD", "123456789"),
+        username=os.getenv("DEFAULT_LOGIN_USERNAME", "keerthana"),
+        phone=os.getenv("DEFAULT_LOGIN_PHONE", "+911234567890"),
+    )
+
+
+def run_app():
+    st.set_page_config(page_title="OneTapSOS", page_icon="🚨", layout="centered")
+    _bootstrap_app()
     
     # Check if this is a tracking link
     query_params = st.query_params
@@ -1593,13 +1604,7 @@ def run_app():
         tracking_token = query_params.get("token")
         _tracking_page(tracking_token)
         return
-    
-    ensure_startup_user(
-        email=os.getenv("DEFAULT_LOGIN_EMAIL", "keerthanaveldanda05@gmail.com"),
-        password=os.getenv("DEFAULT_LOGIN_PASSWORD", "123456789"),
-        username=os.getenv("DEFAULT_LOGIN_USERNAME", "keerthana"),
-        phone=os.getenv("DEFAULT_LOGIN_PHONE", "+911234567890"),
-    )
+
     _init_state()
     _apply_styles()
     _clear_browser_refresh_timer()
@@ -1636,7 +1641,9 @@ def run_app():
     st.session_state.skip_auto_login_once = False
 
     user = st.session_state.user
-    _normalize_existing_contact_phones(user["id"])
+    if st.session_state.get("normalized_phones_for_user") != user["id"]:
+        _normalize_existing_contact_phones(user["id"])
+        st.session_state.normalized_phones_for_user = user["id"]
     contacts = _get_contacts(user["id"])
     _process_live_tracking(user, contacts)
     _process_safe_timer(user, contacts)
